@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
@@ -37,8 +38,8 @@ _runner = Runner(
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User message")
-    user_id: str = Field(default="vercel_user")
-    session_id: str = Field(default="default_session")
+    user_id: str = Field(default="")
+    session_id: str = Field(default="")
 
 
 class ChatResponse(BaseModel):
@@ -543,17 +544,54 @@ def _fallback_response(message: str) -> str:
     )
 
 
+def _fallback_reason(error_text: str) -> str:
+    lower = error_text.lower()
+    if "permission_denied" in lower or "api key was reported as leaked" in lower or "leaked" in lower:
+        return "Gemini unavailable (API key blocked)"
+    if "resource_exhausted" in lower or "429" in lower or "quota" in lower:
+        return "Gemini unavailable (quota reached)"
+    if "503" in lower or "unavailable" in lower or "high demand" in lower:
+        return "Gemini unavailable (high demand)"
+    return "Gemini unavailable"
+
+
+def _resolve_ids(user_id: str, session_id: str, channel: str) -> tuple[str, str]:
+    raw_user = (user_id or "").strip()
+    raw_session = (session_id or "").strip()
+
+    # Avoid shared defaults so one user's upload context does not leak into others.
+    if not raw_user or raw_user == "vercel_user":
+        raw_user = f"u_{uuid4().hex[:10]}"
+
+    if not raw_session or raw_session in {"default_session", "upload_session"}:
+        raw_session = f"{channel}_{uuid4().hex[:10]}"
+
+    return raw_user, raw_session
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest) -> ChatResponse:
+    resolved_user_id, resolved_session_id = _resolve_ids(
+        payload.user_id,
+        payload.session_id,
+        channel="chat",
+    )
     try:
         collected_events = await _runner.run_debug(
             user_messages=[payload.message],
-            user_id=payload.user_id,
-            session_id=payload.session_id,
+            user_id=resolved_user_id,
+            session_id=resolved_session_id,
         )
     except Exception as exc:  # pragma: no cover
+        reason = _fallback_reason(str(exc))
+        fallback_text = _fallback_response(payload.message)
+        if fallback_text.startswith("Prototype fallback"):
+            fallback_text = fallback_text.replace(
+                "Prototype fallback (Gemini quota reached)",
+                f"Prototype fallback ({reason})",
+            )
         return ChatResponse(
-            response=_fallback_response(payload.message),
+            response=fallback_text,
             event_count=0,
             app_name="summarizer_agent",
         )
@@ -581,8 +619,8 @@ async def learning_pack(payload: LearningRequest) -> LearningResponse:
 @app.post("/api/upload-summarize", response_model=UploadSummaryResponse)
 async def upload_summarize(
     file: UploadFile = File(...),
-    user_id: str = Form("vercel_user"),
-    session_id: str = Form("upload_session"),
+    user_id: Optional[str] = Form(None),
+    session_id: Optional[str] = Form(None),
 ) -> UploadSummaryResponse:
     extracted = await _extract_document_text(file)
     extracted = _normalize_text(extracted)
@@ -594,7 +632,18 @@ async def upload_summarize(
         "Summarize this document for learning. Return 4 bullets and one line called Core takeaway.\n\n"
         f"Document:\n{extracted}"
     )
-    chat_result = await chat(ChatRequest(message=prompt, user_id=user_id, session_id=session_id))
+    resolved_user_id, resolved_session_id = _resolve_ids(
+        user_id or "",
+        session_id or "",
+        channel="upload",
+    )
+    chat_result = await chat(
+        ChatRequest(
+            message=prompt,
+            user_id=resolved_user_id,
+            session_id=resolved_session_id,
+        )
+    )
     pack = _build_learning_pack(extracted, title=file.filename or "Uploaded document")
 
     return UploadSummaryResponse(
