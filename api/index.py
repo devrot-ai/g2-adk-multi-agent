@@ -44,6 +44,16 @@ class ChatResponse(BaseModel):
     app_name: str
 
 
+@app.get("/")
+async def root() -> Dict[str, str]:
+    return {
+        "status": "ok",
+        "message": "ADK multi-agent prototype is live.",
+        "quick_test": "/api/chat?message=Summarize:%20Cloud%20Run%20scales%20containers",
+        "health": "/api/health",
+    }
+
+
 @app.get("/api/health")
 async def health() -> Dict[str, str]:
     return {"status": "ok"}
