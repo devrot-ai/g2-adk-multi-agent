@@ -1,0 +1,1 @@
+{"response":"Prototype fallback (Gemini quota reached). Key points: Cloud Run scales containers and charges by usage.","event_count":0,"app_name":"summarizer_agent"}
