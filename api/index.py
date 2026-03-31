@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from google.adk.runners import Runner
@@ -44,14 +45,182 @@ class ChatResponse(BaseModel):
     app_name: str
 
 
-@app.get("/")
-async def root() -> Dict[str, str]:
-    return {
-        "status": "ok",
-        "message": "ADK multi-agent prototype is live.",
-        "quick_test": "/api/chat?message=Summarize:%20Cloud%20Run%20scales%20containers",
-        "health": "/api/health",
-    }
+@app.get("/", response_class=HTMLResponse)
+async def root() -> str:
+        return """
+<!doctype html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>ADK Multi-Agent Prototype</title>
+    <style>
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1f2430;
+            --muted: #5f6b7a;
+            --accent: #0b6e4f;
+            --accent-2: #f4a259;
+            --card: #ffffff;
+            --border: #d8dde6;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Georgia, Cambria, \"Times New Roman\", serif;
+            background:
+                radial-gradient(circle at 20% 20%, #efe8dc 0%, transparent 40%),
+                radial-gradient(circle at 80% 0%, #e2f0ea 0%, transparent 35%),
+                var(--bg);
+            color: var(--ink);
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+        .shell {
+            width: min(920px, 100%);
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: 0 18px 60px rgba(29, 42, 68, 0.12);
+            overflow: hidden;
+        }
+        .hero {
+            padding: 20px 22px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, #fffdf8 0%, #f4fbf8 100%);
+        }
+        .title {
+            margin: 0;
+            font-size: clamp(24px, 3vw, 34px);
+            line-height: 1.1;
+        }
+        .sub {
+            margin: 8px 0 0;
+            color: var(--muted);
+            font-size: 15px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 14px;
+            padding: 18px 22px 22px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            resize: vertical;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            font: 15px/1.4 \"Segoe UI\", Tahoma, sans-serif;
+        }
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        button {
+            border: 0;
+            border-radius: 10px;
+            background: var(--accent);
+            color: white;
+            padding: 10px 14px;
+            font: 600 14px/1 \"Segoe UI\", Tahoma, sans-serif;
+            cursor: pointer;
+        }
+        button.alt {
+            background: var(--accent-2);
+            color: #222;
+        }
+        .out {
+            border: 1px dashed var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            min-height: 120px;
+            white-space: pre-wrap;
+            font: 14px/1.45 \"Consolas\", \"Courier New\", monospace;
+            background: #fcfcfc;
+        }
+        .meta {
+            color: var(--muted);
+            font: 13px/1.3 \"Segoe UI\", Tahoma, sans-serif;
+        }
+        .hint {
+            color: var(--muted);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <main class=\"shell\">
+        <section class=\"hero\">
+            <h1 class=\"title\">ADK Multi-Agent Prototype</h1>
+            <p class=\"sub\">Summarization, classification, and grounded Q&A in one endpoint.</p>
+        </section>
+        <section class=\"grid\">
+            <label for=\"prompt\" class=\"meta\">Prompt</label>
+            <textarea id=\"prompt\">Summarize: Cloud Run scales stateless containers and charges by usage.</textarea>
+            <div class=\"row\">
+                <button id=\"runBtn\">Run Agent</button>
+                <button id=\"sample1\" class=\"alt\">Sample: Classify</button>
+                <button id=\"sample2\" class=\"alt\">Sample: Grounded Q&A</button>
+            </div>
+            <div id=\"status\" class=\"meta\">Ready</div>
+            <div id=\"out\" class=\"out\">Response will appear here.</div>
+            <div class=\"hint\">API routes: /api/chat, /api/health</div>
+        </section>
+    </main>
+
+    <script>
+        const promptEl = document.getElementById('prompt');
+        const outEl = document.getElementById('out');
+        const statusEl = document.getElementById('status');
+        const runBtn = document.getElementById('runBtn');
+
+        async function runPrompt() {
+            const message = promptEl.value.trim();
+            if (!message) {
+                statusEl.textContent = 'Please enter a prompt.';
+                return;
+            }
+            runBtn.disabled = true;
+            statusEl.textContent = 'Running...';
+            outEl.textContent = '';
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    outEl.textContent = JSON.stringify(data, null, 2);
+                    statusEl.textContent = `Error ${res.status}`;
+                    return;
+                }
+                outEl.textContent = data.response || JSON.stringify(data, null, 2);
+                statusEl.textContent = `Done (${res.status})`;
+            } catch (err) {
+                outEl.textContent = String(err);
+                statusEl.textContent = 'Network error';
+            } finally {
+                runBtn.disabled = false;
+            }
+        }
+
+        runBtn.addEventListener('click', runPrompt);
+        document.getElementById('sample1').addEventListener('click', () => {
+            promptEl.value = 'Classify this text by topic and sentiment: I love the camera quality but battery drains fast.';
+        });
+        document.getElementById('sample2').addEventListener('click', () => {
+            promptEl.value = 'Using this context: Cloud Run automatically scales stateless containers and charges by usage. Question: Why is Cloud Run cost efficient?';
+        });
+    </script>
+</body>
+</html>
+"""
 
 
 @app.get("/api/health")
